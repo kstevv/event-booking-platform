@@ -1,0 +1,42 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Show {
+  id                String     @id @default(cuid())
+  artist            String
+  venue             String
+  city              String
+  date              DateTime
+  status            ShowStatus @default(PENDING)
+  description       String?
+  calendarEventId   String?    @unique
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+}
+
+enum ShowStatus {
+  PENDING
+  HOLD
+  CONFIRMED
+  ADVANCED
+  SETTLED
+}
+
+model GoogleToken {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  accessToken   String
+  refreshToken  String
+  scope         String?
+  tokenType     String?
+  expiryDate    BigInt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
