@@ -4,18 +4,18 @@ import ConfirmShowButton from '@/components/ConfirmShowButton';
 export default async function ShowDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
+  const { id } = await params;
+
   const show = await prisma.show.findUnique({
-    where: { id: params.id },
+    where: { id },
   });
 
-  if (!show) {
-    return <div className="p-6 text-red-600">Show not found</div>;
-  }
+  if (!show) return <p>Show not found</p>;
 
   return (
-    <div className="p-6">
+   <div className="p-6">
       <h1 className="text-2xl font-bold mb-2">{show.artist}</h1>
       <p className="mb-2">{show.venue} — {show.city}</p>
       <p className="mb-2">{new Date(show.date).toLocaleString()}</p>

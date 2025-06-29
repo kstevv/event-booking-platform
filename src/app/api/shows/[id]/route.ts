@@ -1,74 +1,78 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { google } from 'googleapis';
+// src/app/api/shows/[id]/route.ts
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const id = params.id;
+import { NextRequest, NextResponse } from 'next/server';
+import { google, calendar_v3 } from 'googleapis';
+import { prisma } from '@/lib/prisma';
+import { getOAuthClient } from '@/lib/google';
+
+  export async function PATCH(
+    req: NextRequest,
+    context: { params: { id: string } }
+  ) {
+    const { id } = context.params;
 
   try {
-    const body = await req.json();
-    const { email } = body;
+    const { email } = await req.json();
 
     const show = await prisma.show.findUnique({ where: { id } });
-    if (!show) {
-      return NextResponse.json({ error: 'Show not found' }, { status: 404 });
-    }
+    if (!show) return NextResponse.json({ error: 'Show not found' }, { status: 404 });
 
     const token = await prisma.googleToken.findUnique({ where: { email } });
-    if (!token) {
-      return NextResponse.json({ error: 'No token found for user' }, { status: 401 });
-    }
+    if (!token) return NextResponse.json({ error: 'Token not found' }, { status: 401 });
 
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET,
-      process.env.GOOGLE_REDIRECT_URI
-    );
-
+    const oauth2Client = getOAuthClient();
     oauth2Client.setCredentials({
       access_token: token.accessToken,
       refresh_token: token.refreshToken,
       expiry_date: Number(token.expiryDate),
     });
 
+    // ⛑️ Refresh token
     try {
       const { credentials } = await oauth2Client.refreshAccessToken();
       oauth2Client.setCredentials(credentials);
-    } catch (err) {
-      console.error('❌ Token refresh failed:', err);
-      return NextResponse.json({ error: 'Token refresh failed' }, { status: 401 });
+    } catch (refreshError) {
+      console.error('❌ Token refresh failed:', refreshError);
+      await prisma.googleToken.delete({ where: { email } });
+
+      return NextResponse.json(
+        { error: 'Google token expired or revoked', needsReauth: true },
+        { status: 401 }
+      );
     }
 
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-    const calendarEvent = await calendar.events.insert({
+    const event: calendar_v3.Schema$Event = {
+      summary: show.artist,
+      location: show.venue,
+      description: show.description || '',
+      start: {
+        dateTime: new Date(show.date).toISOString(),
+        timeZone: 'America/New_York',
+      },
+      end: {
+        dateTime: new Date(new Date(show.date).getTime() + 2 * 60 * 60 * 1000).toISOString(),
+        timeZone: 'America/New_York',
+      },
+    };
+
+    const calendarResponse = await calendar.events.insert({
       calendarId: 'primary',
-      requestBody: {
-        summary: `${show.artist} @ ${show.venue}`,
-        description: show.description || '',
-        start: { dateTime: new Date(show.date).toISOString() },
-        end: {
-          dateTime: new Date(
-            new Date(show.date).getTime() + 2 * 60 * 60 * 1000
-          ).toISOString(),
-        },
-      },
+      requestBody: event,
     });
 
-    const updatedShow = await prisma.show.update({
+    await prisma.show.update({
       where: { id },
-      data: {
-        status: 'CONFIRMED',
-        calendarEventId: calendarEvent.data.id ?? '',
-      },
+      data: { calendarEventId: calendarResponse.data.id || '' },
     });
 
-    return NextResponse.json({ message: 'Show confirmed and calendar synced', show: updatedShow });
-  } catch (error: any) {
-    console.error('❌ API Error:', error.message || error);
-    return NextResponse.json({ error: 'Failed to update show' }, { status: 500 });
+    return NextResponse.json({
+      success: true,
+      htmlLink: calendarResponse.data.htmlLink || null,
+    });
+  } catch (err) {
+    console.error('❌ Unexpected error:', err);
+    return NextResponse.json({ error: 'Server error' }, { status: 500 });
   }
 }
