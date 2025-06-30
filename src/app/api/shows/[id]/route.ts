@@ -1,91 +1,70 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { google, calendar_v3 } from 'googleapis';
+import { NextRequest } from 'next/server';
+import { google } from 'googleapis';
 import { prisma } from '@/lib/prisma';
-import { getOAuthClient } from '@/lib/google';
+import { getGoogleAuthToken, getGoogleOAuthTokens } from '@/lib/google';
 
 export async function PATCH(
   req: NextRequest,
-  context: any // <-- use `any` or a properly awaited object
+  { params }: { params: { id: string } }
 ) {
-  const id = context?.params?.id;
-
-  if (!id) {
-    return NextResponse.json({ error: 'Missing ID in route params' }, { status: 400 });
-  }
-
   try {
-    const { email } = await req.json();
+    const id = params.id;
+    const body = await req.json();
+    const { artist, venue, city, date, status } = body;
 
-    // 1. Fetch the show
-    const show = await prisma.show.findUnique({ where: { id } });
-    if (!show) {
-      return NextResponse.json({ error: 'Show not found' }, { status: 404 });
-    }
-
-    // 2. Fetch Google token
-    const token = await prisma.googleToken.findUnique({ where: { email } });
-    if (!token) {
-      return NextResponse.json({ error: 'Google token not found' }, { status: 401 });
-    }
-
-    const oauth2Client = getOAuthClient();
-    oauth2Client.setCredentials({
-      access_token: token.accessToken,
-      refresh_token: token.refreshToken,
-      expiry_date: Number(token.expiryDate),
-    });
-
-    // 3. Try refreshing the token
-    try {
-      console.log('🔑 Refreshing token for:', email);
-      const { credentials } = await oauth2Client.refreshAccessToken();
-      oauth2Client.setCredentials(credentials);
-    } catch (refreshError) {
-      console.error('❌ Token refresh failed:', refreshError);
-
-      // Optionally delete token so user must reconnect
-      await prisma.googleToken.delete({ where: { email } });
-
-      return NextResponse.json(
-        { error: 'Google token is invalid or expired. Please reconnect.' },
-        { status: 401 }
-      );
-    }
-
-    // 4. Create calendar event
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-
-    const event: calendar_v3.Schema$Event = {
-      summary: show.artist,
-      location: show.venue,
-      description: show.description || '',
-      start: {
-        dateTime: new Date(show.date).toISOString(),
-        timeZone: 'America/New_York',
-      },
-      end: {
-        dateTime: new Date(new Date(show.date).getTime() + 2 * 60 * 60 * 1000).toISOString(),
-        timeZone: 'America/New_York',
-      },
+    const updateData: any = {
+      artist,
+      venue,
+      city,
+      date,
+      status,
     };
 
-    const calendarResponse = await calendar.events.insert({
-      calendarId: 'primary',
-      requestBody: event,
-    });
+    // Only sync to Google Calendar if confirmed
+    if (status === 'CONFIRMED') {
+      const tokenData = await getGoogleAuthToken(process.env.ADMIN_GOOGLE_EMAIL!);
+      if (!tokenData) throw new Error('Missing Google token data');
 
-    const eventId = calendarResponse.data.id || '';
-    const htmlLink = calendarResponse.data.htmlLink || null;
+      const oAuth2Client = getGoogleOAuthTokens({
+        accessToken: tokenData.accessToken,
+        refreshToken: tokenData.refreshToken,
+        expiryDate: Number(tokenData.expiryDate),
+      });
 
-    // 5. Save calendar event ID
-    await prisma.show.update({
+      const calendar = google.calendar({ version: 'v3', auth: oAuth2Client });
+
+      const eventStart = new Date(date).toISOString();
+      const eventEnd = new Date(new Date(date).getTime() + 2 * 60 * 60 * 1000).toISOString();
+
+      const calendarEvent = await calendar.events.insert({
+        calendarId: 'primary',
+        requestBody: {
+          summary: artist,
+          location: typeof venue === 'string' ? venue : venue?.name ?? '',
+          description: `Performance at ${typeof venue === 'string' ? venue : venue?.name}, ${city}`,
+          start: {
+            dateTime: eventStart,
+            timeZone: 'America/Los_Angeles',
+          },
+          end: {
+            dateTime: eventEnd,
+            timeZone: 'America/Los_Angeles',
+          },
+        },
+      });
+
+      updateData.calendarEventId = calendarEvent.data.id ?? null;
+      updateData.calendarEventLink = calendarEvent.data.htmlLink ?? null;
+    }
+
+    const updatedShow = await prisma.show.update({
       where: { id },
-      data: { calendarEventId: eventId },
+      data: updateData,
     });
 
-    return NextResponse.json({ success: true, htmlLink });
-  } catch (err) {
-    console.error('❌ Server error:', err);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return new Response(JSON.stringify(updatedShow), { status: 200 });
+  } catch (error) {
+    console.error('❌ Failed to sync with Google Calendar:', error);
+    return new Response('Internal Server Error', { status: 500 });
   }
 }

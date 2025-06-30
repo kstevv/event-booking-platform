@@ -1,62 +1,69 @@
 'use client';
 
 import { useState } from 'react';
+import { toast } from 'react-hot-toast';
 
-interface Tokens {
-  accessToken: string;
-  refreshToken: string;
-  expiryDate: number;
-}
-
-type Props = {
-  tokens: Tokens;
+type Show = {
+  id: string;
+  artist: string;
+  venue: string;
+  city: string;
+  date: Date;
+  status: string;
+  description?: string | null;
 };
 
+type Props = {
+  show: Show;
+  email: string;
+};
 
-
-export default function CreateEventButton({ tokens }: Props) {
+export default function CreateEventButton({ show, email }: Props) {
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
 
   const handleClick = async () => {
-    setLoading(true);
-    setStatus(null);
-
-    const res = await fetch('/api/google-calendar/create-event', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: 'princekevinprince@gmail.comm',
-        tokens,
-        event: {
-          summary: 'Special Delivery Live',
-          description: '8PM showtime at The Echo.',
-          start: '2025-07-01T20:00:00-07:00',
-          end: '2025-07-01T22:00:00-07:00',
-        },
-      }),
-    });
-
-    const result = await res.json();
-    if (res.ok) {
-      setStatus('✅ Event created!');
-    } else {
-      setStatus(`❌ Error: ${result.error}`);
+    if (!show?.id) {
+      toast.error('Missing show ID');
+      return;
     }
 
-    setLoading(false);
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/shows/${show.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          artist: show.artist,
+          venue: show.venue,
+          city: show.city,
+          date: show.date,
+          status: 'CONFIRMED',
+          description: show.description,
+          email,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        toast.error(data.error || 'Failed to sync with Google Calendar');
+      } else {
+        toast.success('✅ Event synced to Google Calendar!');
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('An error occurred');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="space-y-2">
-      <button
-        onClick={handleClick}
-        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-        disabled={loading}
-      >
-        {loading ? 'Creating event...' : 'Add to Google Calendar'}
-      </button>
-      {status && <p>{status}</p>}
-    </div>
+    <button
+      onClick={handleClick}
+      disabled={loading}
+      className="bg-blue-600 text-white px-4 py-2 rounded-md font-semibold hover:bg-blue-700 disabled:opacity-50"
+    >
+      {loading ? 'Syncing…' : 'Sync to Google Calendar'}
+    </button>
   );
 }

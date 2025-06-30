@@ -1,26 +1,36 @@
 import { prisma } from '@/lib/prisma';
-import ConfirmShowButton from '@/components/ConfirmShowButton';
+import CreateEventButton from '@/components/CreateEventButton';
 
-export default async function ShowDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
+export default async function ShowPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params; // ✅ await the params
 
   const show = await prisma.show.findUnique({
-    where: { id },
+  where: { id },
+  include: {
+    venue: true, // 👈 this enables show.venue.name
+  },
+});
+
+
+  if (!show) {
+    return <div className="p-6 text-red-600">Show not found</div>;
+  }
+
+  const token = await prisma.googleToken.findUnique({
+    where: { email: 'princekevinprince@gmail.com' },
   });
 
-  if (!show) return <p>Show not found</p>;
+  if (!token) {
+    return <div className="p-6 text-red-600">No Google token found</div>;
+  }
 
   return (
-   <div className="p-6">
-      <h1 className="text-2xl font-bold mb-2">{show.artist}</h1>
-      <p className="mb-2">{show.venue} — {show.city}</p>
-      <p className="mb-2">{new Date(show.date).toLocaleString()}</p>
-      <p className="mb-4">Status: {show.status}</p>
-      <ConfirmShowButton show={show} email="princekevinprince@gmail.com" />
-    </div>
+    <main className="p-6 space-y-4">
+      <h1 className="text-3xl font-bold">{show.artist}</h1>
+      <p>{show.description}</p>
+      <p>{new Date(show.date).toLocaleString()}</p>
+
+      <CreateEventButton show={{ ...show, venue: show.venue.name }} email="princekevinprince@gmail.com" />
+    </main>
   );
 }

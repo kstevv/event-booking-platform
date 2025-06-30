@@ -31,8 +31,5 @@ export async function POST(req: NextRequest) {
     description,
   });
 
-  console.log('req body', req.body);
-console.log('auth headers', req.headers);
-
   return NextResponse.json({ success: true, show });
 }

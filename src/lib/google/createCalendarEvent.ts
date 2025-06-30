@@ -22,25 +22,65 @@ export async function createCalendarEventForShow(showId: string, userEmail: stri
 
   const show = await prisma.show.findUnique({ where: { id: showId } });
   if (!show) throw new Error('Show not found');
-  if (show.calendarEventId) return; // already synced
+  if (show.calendarEventId) return; // Already synced
 
   const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-  const event = await calendar.events.insert({
+  const startTime = show.date.toISOString();
+  const endTime = new Date(show.date.getTime() + 2 * 60 * 60 * 1000).toISOString(); // +2 hrs
+
+  console.log('📦 Sending to Google API:', JSON.stringify({
+  calendarId: 'primary',
+  requestBody: {
+    summary: show.artist,
+    description: show.description || '',
+    start: {
+      dateTime: startTime,
+      timeZone: 'America/Los_Angeles',
+    },
+    end: {
+      dateTime: endTime,
+      timeZone: 'America/Los_Angeles',
+    },
+  },
+}, null, 2));
+  const response = await calendar.events.insert({
     calendarId: 'primary',
     requestBody: {
-      summary: `${show.artist} @ ${show.venue}`,
-      description: show.description ?? '',
-      start: { dateTime: show.date.toISOString() },
+      summary: show.artist,
+      description: show.description || '',
+      start: {
+        dateTime: startTime,
+        timeZone: 'America/Los_Angeles',
+      },
       end: {
-        dateTime: new Date(show.date.getTime() + 2 * 60 * 60 * 1000).toISOString(), // +2 hrs
+        dateTime: endTime,
+        timeZone: 'America/Los_Angeles',
       },
     },
   });
+console.log('📦 Sending to Google API:', JSON.stringify({
+  calendarId: 'primary',
+  requestBody: {
+    summary: show.artist,
+    description: show.description || '',
+    start: {
+      dateTime: startTime,
+      timeZone: 'America/Los_Angeles',
+    },
+    end: {
+      dateTime: endTime,
+      timeZone: 'America/Los_Angeles',
+    },
+  },
+}, null, 2));
 
-  // ✅ Optional: store the Google event ID
+  // ✅ Optional: Store the Google event ID
   await prisma.show.update({
     where: { id: showId },
-    data: { calendarEventId: event.data.id || '' },
+    data: { calendarEventId: response.data.id || '' },
   });
+
+  console.log(`✅ Calendar event created: ${response.data.htmlLink}`);
+  return response.data.htmlLink;
 }
